@@ -8,74 +8,83 @@ import { Audio } from 'expo-av';
 export default function App() {
   const [whisperContext, setWhisperContext] = useState(null);
   const [transcription, setTranscription] = useState('');
+  const [status, setStatus] = useState('Ready. Tap Load Model to begin.');
+  const [error, setError] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recording, setRecording] = useState(null);
+  const [modelLoading, setModelLoading] = useState(false);
 
   useEffect(() => {
-    // Request audio permissions and set up audio mode
-    const setupAudio = async () => {
-      try {
-        const { status } = await Audio.requestPermissionsAsync();
-        if (status !== 'granted') {
-          console.error('Audio permission not granted');
-          return;
-        }
-
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: false,
-        });
-      } catch (e) {
-        console.error('Failed to setup audio:', e);
-      }
-    };
-
-    // Initialize the model when the app loads
-    const setupWhisper = async () => {
-      try {
-        const fileName = 'ggml-tiny.en-q5_1.bin';
-        const modelPath = FileSystem.documentDirectory + fileName;
-
-        const fileInfo = await FileSystem.getInfoAsync(modelPath);
-        if (!fileInfo.exists) {
-          console.log('Copying model to documents directory...');
-
-          const asset = Asset.fromModule(require('./assets/language_models/ggml-tiny.en-q5_1.bin'));
-          await asset.downloadAsync();
-          const localUri = asset.localUri || asset.uri;
-
-          if (!localUri) {
-            throw new Error('Asset URI is unavailable');
-          }
-
-          console.log('Asset URI:', localUri);
-          await FileSystem.copyAsync({
-            from: localUri,
-            to: modelPath,
-          });
-          console.log('Successfully copied model to:', modelPath);
-        }
-
-        const context = await initWhisper({
-          filePath: modelPath,
-        });
-        setWhisperContext(context);
-        console.log('Whisper model loaded successfully!', modelPath);
-      } catch (e) {
-        console.error('Failed to load Whisper model:', e);
-      }
-    };
-
-    setupAudio();
-    setupWhisper();
+    setStatus('Ready. Tap Load Model to begin.');
   }, []);
 
+  const requestAudioPermissions = async () => {
+    const { status } = await Audio.requestPermissionsAsync();
+    if (status !== 'granted') {
+      throw new Error('Audio permission not granted');
+    }
+
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    });
+  };
+
+  const loadModel = async () => {
+    
+    if (modelLoading || whisperContext) return;
+
+    try {
+      setError(null);
+      setModelLoading(true);
+      setStatus('Requesting audio permissions...');
+      await requestAudioPermissions();
+
+      setStatus('Checking local model file...');
+      const fileName = 'ggml-tiny.en-q5_1.bin';
+      const modelPath = FileSystem.documentDirectory + fileName;
+
+      const fileInfo = await FileSystem.getInfoAsync(modelPath);
+      if (!fileInfo.exists) {
+        setStatus('Copying model to documents directory...');
+        const asset = Asset.fromModule(require('./assets/language_models/ggml-tiny.en-q5_1.bin'));
+        await asset.downloadAsync();
+        const localUri = asset.localUri || asset.uri;
+
+        if (!localUri) {
+          throw new Error('Asset URI is unavailable');
+        }
+
+        await FileSystem.copyAsync({
+          from: localUri,
+          to: modelPath,
+        });
+      }
+
+      setStatus('Initializing Whisper...');
+      const context = await initWhisper({
+        filePath: modelPath,
+      });
+      setWhisperContext(context);
+      setStatus('Whisper model loaded successfully');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      setStatus('Failed to load Whisper model');
+      console.error('Failed to load Whisper model:', e);
+    } finally {
+      setModelLoading(false);
+    }
+  };
+
   const startTranscribing = async () => {
+   
     if (!whisperContext || isRecording) return;
 
     try {
+      setStatus('Recording...');
       setIsRecording(true);
       setTranscription('Recording...');
 
@@ -85,10 +94,10 @@ export default function App() {
       );
       setRecording(newRecording);
 
-      // Record for 5 seconds
+      // Record for some seconds
       setTimeout(async () => {
         await stopRecordingAndTranscribe();
-      }, 5000);
+      }, 20);
 
     } catch (e) {
       console.error('Failed to start recording:', e);
@@ -101,11 +110,13 @@ export default function App() {
     if (!recording) return;
 
     try {
+      setStatus('Processing audio...');
       setTranscription('Processing...');
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
 
       if (uri && whisperContext) {
+        setStatus('Transcribing...');
         setTranscription('Transcribing...');
 
         const result = await whisperContext.transcribe(uri, {
@@ -116,10 +127,14 @@ export default function App() {
         });
 
         setTranscription(result.result || 'No transcription');
+        setStatus('Transcription complete');
       }
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      setStatus('Failed to transcribe');
       console.error('Failed to transcribe:', e);
-      setTranscription('Failed to transcribe: ' + e.message);
+      setTranscription('Failed to transcribe: ' + message);
     } finally {
       setIsRecording(false);
       setRecording(null);
@@ -128,18 +143,20 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.text}>Whisper AI Local</Text>
-      <Button 
-        title={
-          !whisperContext 
-            ? "Loading Model..." 
-            : isRecording 
-              ? "Recording... (5s)" 
-              : "Start Recording & Transcribe"
-        } 
-        onPress={startTranscribing} 
+      <Text style={styles.text}>Audit</Text>
+      <Button
+        title={modelLoading ? 'Loading Model...' : whisperContext ? 'Model Loaded' : 'Load Whisper Model'}
+        onPress={loadModel}
+        disabled={modelLoading || !!whisperContext}
+      />
+      <View style={styles.spacer} />
+      <Button
+        title={isRecording ? 'Recording... (2s)' : 'Start Recording & Transcribe'}
+        onPress={startTranscribing}
         disabled={!whisperContext || isRecording}
       />
+      <Text style={styles.status}>{status}</Text>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
       <Text style={styles.transcription}>{transcription}</Text>
     </View>
   );
@@ -148,5 +165,8 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   text: { fontSize: 20, marginBottom: 20 },
+  spacer: { height: 16 },
+  status: { marginTop: 12, fontSize: 16, color: '#333', textAlign: 'center' },
+  error: { marginTop: 12, fontSize: 14, color: 'red', textAlign: 'center' },
   transcription: { marginTop: 20, fontSize: 16, textAlign: 'center' }
 });
