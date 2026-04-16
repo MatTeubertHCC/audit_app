@@ -47,7 +47,9 @@ export default function App() {
       const modelPath = FileSystem.documentDirectory + fileName;
 
       const fileInfo = await FileSystem.getInfoAsync(modelPath);
+      
       if (!fileInfo.exists) {
+        
         setStatus('Copying model to documents directory...');
         const asset = Asset.fromModule(require('./assets/language_models/ggml-tiny.en-q5_1.bin'));
         await asset.downloadAsync();
@@ -78,92 +80,44 @@ export default function App() {
       setModelLoading(false);
     }
   };
-
+  
+  
   const startTranscribing = async () => {
     if (!whisperContext || isRecording) return;
 
     try {
-      setStatus('Recording audio...')
+      setStatus('Recording and transcribing...');
       setIsRecording(true);
       setTranscription('Listening...');
 
-      const whisperRecordingOptions = {
-        isMeteringEnabled: false,
-        android: {
-          extension: '.m4a',
-          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-          audioEncoder: Audio.AndroidAudioEncoder.AAC,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 128000,
-        },
-        ios: {
-          extension: '.wav',
-          audioQuality: Audio.IOSAudioQuality.HIGH,
-          sampleRate: 16000,
-          numberOfChannels: 1,
-          bitRate: 128000,
-          linearPCMBitDepth: 16,
-          linearPCMIsBigEndian: false,
-          linearPCMIsFloat: false,
-        },
-        web: {
-          mimeType: 'audio/webm',
-          bitsPerSecond: 128000,
-        },
-      };
+      // 1. Start Whisper's native real-time audio engine
+      const { stop, subscribe } = await whisperContext.transcribeRealtime({
+        language: 'en',
+      });
 
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        whisperRecordingOptions
-      );
-      setRecording(newRecording);
+      subscribe((evt) => {
+        const { isCapturing, data } = evt;
+        
+        // Update the screen dynamically as words come in
+        if (data && data.result) {
+          setTranscription(data.result);
+        }
 
-      // Pass the actual object into the function so it doesn't rely on React state
-      setTimeout(async () => {
-        await stopRecordingAndTranscribe(newRecording); 
-      }, 2000);
+        if (!isCapturing) {
+          setStatus('Complete');
+          setIsRecording(false);
+        }
+      });
+
+      setTimeout(() => {
+        stop(); 
+      }, 50000);
 
     } catch (e) {
-      console.error('Failed to start recording:', e);
-      setTranscription('Failed to start recording');
-      setIsRecording(false);
-    }
-  };
-
-  const stopRecordingAndTranscribe = async (currentRecording) => {
-    if (!currentRecording) return;
-
-    try {
-      setStatus('Processing audio...');
-      setTranscription('Processing...');
-      
-      // Use the passed argument, not the state variable
-      await currentRecording.stopAndUnloadAsync();
-      const uri = currentRecording.getURI();
-
-      if (uri && whisperContext) {
-        setStatus('Transcribing...');
-        setTranscription('Transcribing...');
-
-        const result = await whisperContext.transcribe(uri, {
-          language: 'en',
-          onProgress: (progress) => {
-            console.log('Progress:', progress);
-          },
-        });
-
-        setTranscription(result.result || 'No transcription');
-        setStatus('Transcription complete');
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setError(message);
-      setStatus('Failed to transcribe');
       console.error('Failed to transcribe:', e);
-      setTranscription('Failed to transcribe: ' + message);
-    } finally {
+      setTranscription('Transcription failed: ' + String(e));
+      setStatus('Error');
       setIsRecording(false);
-      setRecording(null); // Clean up the state here
     }
   };
 
@@ -189,10 +143,29 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 1 },
   text: { fontSize: 20, marginBottom: 20 },
   spacer: { height: 16 },
-  status: { marginTop: 12, fontSize: 16, color: '#333', textAlign: 'center' },
+  status: { marginTop: 12,
+    fontSize: 12,
+    color: '#333',
+    textAlign: 'center',
+    width: '100%',
+    minHeight: 150,
+    padding: 1,
+    borderWidth: 1
+  },
   error: { marginTop: 12, fontSize: 14, color: 'red', textAlign: 'center' },
-  transcription: { marginTop: 20, fontSize: 16, textAlign: 'center' }
+  transcription: { 
+    marginTop: 20, 
+    fontSize: 12, 
+    textAlign: 'left',
+    width: '100%',
+    minHeight: 150,
+    padding: 1,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 1,
+    backgroundColor: '#f8f9fa'
+  }
 });
