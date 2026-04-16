@@ -80,24 +80,48 @@ export default function App() {
   };
 
   const startTranscribing = async () => {
-   
     if (!whisperContext || isRecording) return;
 
     try {
-      setStatus('Recording...');
+      setStatus('Recording audio...')
       setIsRecording(true);
-      setTranscription('Recording...');
+      setTranscription('Listening...');
 
-      // Start recording
+      const whisperRecordingOptions = {
+        isMeteringEnabled: false,
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: '.wav',
+          audioQuality: Audio.IOSAudioQuality.HIGH,
+          sampleRate: 16000,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 128000,
+        },
+      };
+
       const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
+        whisperRecordingOptions
       );
       setRecording(newRecording);
 
-      // Record for some seconds
+      // Pass the actual object into the function so it doesn't rely on React state
       setTimeout(async () => {
-        await stopRecordingAndTranscribe();
-      }, 20);
+        await stopRecordingAndTranscribe(newRecording); 
+      }, 2000);
 
     } catch (e) {
       console.error('Failed to start recording:', e);
@@ -106,14 +130,16 @@ export default function App() {
     }
   };
 
-  const stopRecordingAndTranscribe = async () => {
-    if (!recording) return;
+  const stopRecordingAndTranscribe = async (currentRecording) => {
+    if (!currentRecording) return;
 
     try {
       setStatus('Processing audio...');
       setTranscription('Processing...');
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
+      
+      // Use the passed argument, not the state variable
+      await currentRecording.stopAndUnloadAsync();
+      const uri = currentRecording.getURI();
 
       if (uri && whisperContext) {
         setStatus('Transcribing...');
@@ -137,7 +163,7 @@ export default function App() {
       setTranscription('Failed to transcribe: ' + message);
     } finally {
       setIsRecording(false);
-      setRecording(null);
+      setRecording(null); // Clean up the state here
     }
   };
 
@@ -151,7 +177,7 @@ export default function App() {
       />
       <View style={styles.spacer} />
       <Button
-        title={isRecording ? 'Recording... (2s)' : 'Start Recording & Transcribe'}
+        title={isRecording ? 'Recording... ' : 'Start Recording & Transcribe'}
         onPress={startTranscribing}
         disabled={!whisperContext || isRecording}
       />
